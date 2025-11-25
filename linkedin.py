@@ -19,12 +19,22 @@ load_dotenv()
 # --- CONFIG ---
 JOB_KEYWORD = "junior developer"
 COUNTRIES = ["Belgium", "Netherlands"]
-DATE_POSTED = "24h"   # "any", "24h", "week", "month"
-EXPERIENCE_LEVELS = []  # [] all, ["2"] Entry, ["2","3"] Entry+Associate
+DATE_POSTED = "24h"
+EXPERIENCE_LEVELS = []
+WORKPLACE_TYPES = ["2", "3"]
 
+# DATE_POSTED codes:            # EXPERIENCE_LEVELS codes:          # WORKPLACE_TYPES codes:    
+# "any" = Any time              # [] = All levels                   # [] = All types       
+# "24h" = Past 24 hours         # ["1"] = Internship                # ["1"] = On-site  
+# "week" = Past week            # ["2"] = Entry level               # ["2"] = Remote   
+# "month" = Past month          # ["3"] = Associate                 # ["3"] = Hybrid   
+                                # ["4"] = Mid-Senior level          
+                                # ["5"] = Director                  
+                                # ["6"] = Executive                 
+           
 # --- EMAIL ---
 SENDER_EMAIL = os.getenv("SENDER_EMAIL")
-EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
+EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD") # Google App Password (like: abcd efgh ijkl mnop)
 RECEIVER_EMAIL = os.getenv("RECEIVER_EMAIL")
 
 # --- SCROLL ---
@@ -35,6 +45,7 @@ DETAIL_PAUSE = 2
 # --- SAFE FILENAMES ---
 safe_keyword = JOB_KEYWORD.replace(" ", "_")
 safe_exp = ",".join(EXPERIENCE_LEVELS).replace(",", "_") if EXPERIENCE_LEVELS else "all"
+safe_workplace = ",".join(WORKPLACE_TYPES).replace(",", "_") if WORKPLACE_TYPES else "all"
 safe_date = DATE_POSTED
 
 # --- SETUP CHROME ---
@@ -44,15 +55,17 @@ options.add_argument("--incognito")
 driver = webdriver.Chrome(options=options)
 
 # --- HELPER FUNCTIONS ---
-def build_linkedin_url(keyword, location, exp_levels, date_posted):
+def build_linkedin_url(keyword, location, exp_levels, workplace_types, date_posted):
     exp_param = ",".join(exp_levels) if exp_levels else ""
+    workplace_param = ",".join(workplace_types) if workplace_types else ""
     date_param = ""
     if date_posted == "24h": date_param = "r86400"
     elif date_posted == "week": date_param = "r604800"
     elif date_posted == "month": date_param = "r2592000"
 
     url = f"https://www.linkedin.com/jobs/search/?keywords={quote_plus(keyword)}&location={quote_plus(location)}"
-    if exp_param: url += f"&f_E={quote_plus(exp_param)}"
+    if exp_param: url += f"&f_E={exp_param}"
+    if workplace_param: url += f"&f_WT={workplace_param}"
     if date_param: url += f"&f_TPR={date_param}"
     url += "&position=1&pageNum=0"
     return url
@@ -80,7 +93,8 @@ def scroll_page(driver):
 def fetch_job_details(job_url):
     job_desc = ""
     company_desc = ""
-    if not job_url: return job_desc, company_desc
+    if not job_url: 
+        return job_desc, company_desc
     try:
         driver.get(job_url)
         time.sleep(DETAIL_PAUSE)
@@ -137,13 +151,14 @@ all_jobs = []
 
 for country in COUNTRIES:
     print(f"=== Scraping LinkedIn Jobs for {country} ===")
-    url = build_linkedin_url(JOB_KEYWORD, country, EXPERIENCE_LEVELS, DATE_POSTED)
+    url = build_linkedin_url(JOB_KEYWORD, country, EXPERIENCE_LEVELS, WORKPLACE_TYPES, DATE_POSTED)
+    print(f"🔗 URL: {url}")
     driver.get(url)
     scroll_page(driver)
 
     html = driver.page_source
     soup = BeautifulSoup(html, "html.parser")
-    job_cards = soup.find_all("div", class_="base-card")
+    job_cards = soup.find_all("div", class_="base-card") 
     
     for idx, card in enumerate(job_cards):
         a_tag = card.find("a", class_="base-card__full-link")
@@ -178,7 +193,7 @@ for country in COUNTRIES:
 
 # --- SAVE TO CSV ---
 if all_jobs:
-    csv_file = f"linkedin_jobs_{safe_keyword}_{'_'.join([c.replace(' ','') for c in COUNTRIES])}_{safe_exp}_{safe_date}.csv"
+    csv_file = f"linkedin_jobs_{safe_keyword}_{'_'.join([c.replace(' ','') for c in COUNTRIES])}_{safe_exp}_{safe_workplace}_{safe_date}.csv"
     with open(csv_file, "w", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=all_jobs[0].keys())
         writer.writeheader()
