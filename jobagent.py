@@ -6,15 +6,25 @@ from selenium.webdriver.support import expected_conditions as EC
 from bs4 import BeautifulSoup
 from urllib.parse import quote_plus
 import time
-import csv
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 from datetime import datetime
 from dotenv import load_dotenv
+from openpyxl import Workbook
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+import html
 import os
+import traceback
+import socket
 
 load_dotenv()
+
+# --- EMAIL CONFIG ---
+SENDER_EMAIL = os.getenv("SENDER_EMAIL")
+EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD")
+RECEIVER_EMAIL = os.getenv("RECEIVER_EMAIL", "laxmimaru66@gmail.com")
+SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
+SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
 
 # --- CONFIG ---
 JOB_KEYWORD = "junior developer"
@@ -32,10 +42,7 @@ WORKPLACE_TYPES = ["2", "3"]
                                 # ["5"] = Director                  
                                 # ["6"] = Executive                 
            
-# --- EMAIL ---
-SENDER_EMAIL = os.getenv("SENDER_EMAIL")
-EMAIL_PASSWORD = os.getenv("EMAIL_PASSWORD") # Google App Password (like: abcd efgh ijkl mnop)
-RECEIVER_EMAIL = os.getenv("RECEIVER_EMAIL")
+
 
 # --- SCROLL ---
 MAX_SCROLL_ATTEMPTS = 200
@@ -110,41 +117,92 @@ def fetch_job_details(job_url):
         print(f"⚠️ Failed to fetch job detail: {e}")
     return job_desc, company_desc
 
-def send_job_email(jobs, sender, receiver, password):
-    if not jobs: return False
-    jobs_html = ""
+
+def build_excel_workbook(jobs):
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Jobs"
+
+    headers = list(jobs[0].keys())
+    sheet.append(headers)
     for job in jobs:
-        jobs_html += f"""
-        <div style="margin:10px 0; padding:10px; border-left:4px solid #2557a7; background:#fff; border-radius:5px;">
-            <strong>{job['job_title']}</strong><br>
-            <em>{job['company_name']}</em> - {job['location']}<br>
-            <a href="{job['job_url']}" target="_blank">🔗 View Job</a><br>
-            <small>Country: {job['country']}</small>
-        </div>
-        """
-    html_content = f"""
-    <html><body>
-    <h2>LinkedIn Jobs - {len(jobs)} found</h2>
-    <p>Date: {datetime.now().strftime('%Y-%m-%d')}</p>
-    {jobs_html}
-    <p><em>Automated Scraper • {datetime.now().strftime('%Y-%m-%d %H:%M')}</em></p>
-    </body></html>
-    """
+        sheet.append([job.get(field, "") for field in headers])
+    return workbook
+
+
+def send_job_email(jobs, sender, password, receiver):
+    if not jobs:
+        print("⚠️ No jobs to email.")
+        return False
+    missing = []
+    if not sender: missing.append('SENDER_EMAIL')
+    if not password: missing.append('EMAIL_PASSWORD')
+    if missing:
+        print(f"⚠️ Email credentials missing: {', '.join(missing)}. Skipping email send.")
+        return False
+
+    # Debug summary
+    masked_sender = sender
     try:
-        msg = MIMEMultipart()
-        msg['From'] = sender
-        msg['To'] = receiver
-        msg['Subject'] = f"{len(jobs)} New LinkedIn Jobs - {datetime.now().strftime('%Y-%m-%d')}"
-        msg.attach(MIMEText(html_content, 'html'))
-        with smtplib.SMTP('smtp.gmail.com', 587) as server:
+        local, domain = sender.split('@', 1)
+        masked_sender = f"{local[:2]}***@{domain}"
+    except Exception:
+        pass
+    print(f"ℹ️ Email debug: sender={masked_sender}, receiver={receiver}")
+    print(f"ℹ️ SMTP server: {SMTP_SERVER}:{SMTP_PORT}")
+    print(f"ℹ️ EMAIL_PASSWORD set: {'yes' if password else 'no'}")
+    debug_level = os.getenv('EMAIL_DEBUG', '0')
+    print(f"ℹ️ EMAIL_DEBUG={debug_level}")
+
+    # Optional quick connectivity test
+    try:
+        print(f"ℹ️ Testing TCP connection to {SMTP_SERVER}:{SMTP_PORT}...")
+        sock = socket.create_connection((SMTP_SERVER, SMTP_PORT), timeout=10)
+        sock.close()
+        print("✅ TCP connection successful")
+    except Exception as e:
+        print(f"⚠️ TCP connection failed: {e}")
+
+    headers = list(jobs[0].keys())
+    # Build HTML table
+    table_rows = []
+    for job in jobs:
+        cols = [html.escape(str(job.get(h, ""))) for h in headers]
+        table_rows.append("<tr>" + "".join(f"<td>{c}</td>" for c in cols) + "</tr>")
+    table_html = (
+        "<table border=\"1\" cellpadding=\"4\" cellspacing=\"0\">"
+        + "<thead><tr>"
+        + "".join(f"<th>{html.escape(h)}</th>" for h in headers)
+        + "</tr></thead><tbody>"
+        + "".join(table_rows)
+        + "</tbody></table>"
+    )
+
+    html_content = f"<html><body><p>Found {len(jobs)} jobs.</p>{table_html}</body></html>"
+
+    msg = MIMEMultipart("alternative")
+    msg["From"] = sender
+    msg["To"] = receiver
+    msg["Subject"] = f"LinkedIn Job Scraper Results ({len(jobs)} jobs)"
+    msg.attach(MIMEText(html_content, "html"))
+
+    try:
+        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT, timeout=30) as server:
+            # enable debuglevel to print SMTP protocol exchange when requested
+            if debug_level == '1':
+                server.set_debuglevel(1)
+            server.ehlo()
             server.starttls()
+            server.ehlo()
             server.login(sender, password)
             server.send_message(msg)
         print(f"✅ Email sent to {receiver}")
         return True
     except Exception as e:
-        print("⚠️ Failed to send email:", e)
+        print(f"⚠️ Failed to send email: {e}")
+        traceback.print_exc()
         return False
+
 
 # --- MAIN SCRAPING LOOP ---
 all_jobs = []
@@ -156,8 +214,8 @@ for country in COUNTRIES:
     driver.get(url)
     scroll_page(driver)
 
-    html = driver.page_source
-    soup = BeautifulSoup(html, "html.parser")
+    page_html = driver.page_source
+    soup = BeautifulSoup(page_html, "html.parser")
     job_cards = soup.find_all("div", class_="base-card") 
     
     for idx, card in enumerate(job_cards):
@@ -191,18 +249,24 @@ for country in COUNTRIES:
             "job_description": job_description
         })
 
-# --- SAVE TO CSV ---
+# --- SAVE TO EXCEL ---
 if all_jobs:
-    csv_file = f"linkedin_jobs_{safe_keyword}_{'_'.join([c.replace(' ','') for c in COUNTRIES])}_{safe_exp}_{safe_workplace}_{safe_date}.csv"
-    with open(csv_file, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=all_jobs[0].keys())
-        writer.writeheader()
-        writer.writerows(all_jobs)
-    print(f"📁 Saved {len(all_jobs)} jobs to {csv_file}")
+    base_name = f"linkedin_jobs_{safe_keyword}_{'_'.join([c.replace(' ','') for c in COUNTRIES])}_{safe_exp}_{safe_workplace}_{safe_date}"
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    seq = 1
+    while True:
+        excel_file = f"{base_name}_{timestamp}_{seq}.xlsx"
+        if not os.path.exists(excel_file):
+            break
+        seq += 1
+
+    workbook = build_excel_workbook(all_jobs)
+    # Send jobs as HTML table in email (no attachment)
+    send_job_email(all_jobs, SENDER_EMAIL, EMAIL_PASSWORD, RECEIVER_EMAIL)
+
+    workbook.save(excel_file)
+    print(f"📁 Saved {len(all_jobs)} jobs to {excel_file}")
 else:
     print("⚠️ No jobs extracted.")
-
-# --- SEND EMAIL ---
-send_job_email(all_jobs, SENDER_EMAIL, RECEIVER_EMAIL, EMAIL_PASSWORD)
 
 driver.quit()
