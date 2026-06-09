@@ -6,6 +6,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from bs4 import BeautifulSoup
 from urllib.parse import quote_plus
 import time
+import re
 from datetime import datetime
 from dotenv import load_dotenv
 from openpyxl import Workbook
@@ -27,11 +28,30 @@ SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
 SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
 
 # --- CONFIG ---
-JOB_KEYWORD = "junior developer"
-COUNTRIES = ["Belgium", "Netherlands"]
+JOB_KEYWORD = "MERN OR React OR node js"
+
+# Build regex patterns for each search term so matching is case-insensitive
+# and can handle variants like Node.js / node js / nodejs.
+SEARCH_PATTERNS = []
+for term in [t.strip() for t in re.split(r'(?i)\s+OR\s+', JOB_KEYWORD) if t.strip()]:
+    if term.lower() == "mern":
+        SEARCH_PATTERNS.append(re.compile(r"\bmern\b", re.I))
+    elif term.lower() == "react":
+        SEARCH_PATTERNS.append(re.compile(r"\breact\b", re.I))
+    elif term.lower() in ("node js", "nodejs", "node.js", "node"):
+        SEARCH_PATTERNS.append(re.compile(r"\bnode(?:\.js| js|js)?\b", re.I))
+    else:
+        SEARCH_PATTERNS.append(re.compile(r"\b" + re.escape(term) + r"\b", re.I))
+
+LOCATION_PATTERNS = [
+    re.compile(r"\bhyderabad\b", re.I),
+    re.compile(r"\b(remote|work from home|wfh)\b", re.I),
+]
+
+COUNTRIES = ["India"]
 DATE_POSTED = "24h"
 EXPERIENCE_LEVELS = []
-WORKPLACE_TYPES = ["2", "3"]
+WORKPLACE_TYPES = ["1","2", "3"]
 
 # DATE_POSTED codes:            # EXPERIENCE_LEVELS codes:          # WORKPLACE_TYPES codes:    
 # "any" = Any time              # [] = All levels                   # [] = All types       
@@ -164,15 +184,16 @@ def send_job_email(jobs, sender, password, receiver):
         print(f"⚠️ TCP connection failed: {e}")
 
     headers = list(jobs[0].keys())
+    email_headers = ["SNO"] + headers
     # Build HTML table
     table_rows = []
-    for job in jobs:
-        cols = [html.escape(str(job.get(h, ""))) for h in headers]
+    for index, job in enumerate(jobs, start=1):
+        cols = [html.escape(str(index))] + [html.escape(str(job.get(h, ""))) for h in headers]
         table_rows.append("<tr>" + "".join(f"<td>{c}</td>" for c in cols) + "</tr>")
     table_html = (
         "<table border=\"1\" cellpadding=\"4\" cellspacing=\"0\">"
         + "<thead><tr>"
-        + "".join(f"<th>{html.escape(h)}</th>" for h in headers)
+        + "".join(f"<th>{html.escape(h)}</th>" for h in email_headers)
         + "</tr></thead><tbody>"
         + "".join(table_rows)
         + "</tbody></table>"
@@ -233,8 +254,25 @@ for country in COUNTRIES:
         posted = card.find("time", class_="job-search-card__listdate")
         posted = posted.text.strip() if posted else ""
 
+        if not any(pattern.search(location) for pattern in LOCATION_PATTERNS):
+            print(f"⚠️ Skipping job because location is not Hyderabad or remote: {location}")
+            continue
+
         print(f"🔍 ({idx + 1}/{len(job_cards)}) Fetching job: {job_title}")
         job_description, company_description = fetch_job_details(job_url)
+
+        combined_text = " ".join([
+            job_title,
+            company_name,
+            location,
+            benefit,
+            posted,
+            job_description,
+            company_description
+        ])
+        if not any(pattern.search(combined_text) for pattern in SEARCH_PATTERNS):
+            print(f"⚠️ Skipping job because it does not match case-insensitive terms: {JOB_KEYWORD}")
+            continue
 
         all_jobs.append({
             "country": country,
