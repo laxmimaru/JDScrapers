@@ -76,10 +76,19 @@ safe_workplace = ",".join(WORKPLACE_TYPES).replace(",", "_") if WORKPLACE_TYPES 
 safe_date = DATE_POSTED
 
 # --- SETUP CHROME ---
+# --- SETUP CHROME ---
 options = Options()
 options.add_argument("--start-maximized")
 options.add_argument("--incognito")
+
+# If running on GitHub cloud servers, force headless mode to prevent a visual window crash
+if os.getenv("GITHUB_ACTIONS") == "true":
+    options.add_argument("--headless=new")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+
 driver = webdriver.Chrome(options=options)
+
 
 # --- HELPER FUNCTIONS ---
 def build_linkedin_url(keyword, location, exp_levels, workplace_types, date_posted):

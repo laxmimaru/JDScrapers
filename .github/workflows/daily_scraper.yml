@@ -1,0 +1,45 @@
+name: Daily LinkedIn Job Scraper
+
+on:
+  schedule:
+    # Runs every day at 11:05 PM IST (17:35 UTC). Adjust the hour if needed.
+    - cron: '35 17 * * *'
+  workflow_dispatch: # Allows you to also trigger the script manually from the GitHub website
+
+jobs:
+  scrape_and_email:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Check out repository code
+      uses: actions/checkout@v4
+
+    - name: Set up Python 3.12
+      uses: actions/setup-python@v5
+      with:
+        python-level: '3.12'
+        cache: 'pip' # Speeds up subsequent workflow runs
+
+    - name: Install Google Chrome & Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y wget curl unzip libxi6 libgconf-2-4 libnss3
+        # Ensure Chrome is available on the virtual machine
+        sudo apt-get install -y google-chrome-stable
+
+    - name: Install Python Package Dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install selenium beautifulsoup4 openpyxl python-dotenv
+
+    - name: Run Job Automation Script
+      env:
+        # Securely inject variables from GitHub Secrets directly into your script environment
+        SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
+        EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+        RECEIVER_EMAIL: ${{ secrets.RECEIVER_EMAIL }}
+        SMTP_SERVER: "://gmail.com"
+        SMTP_PORT: "587"
+      run: |
+        # Run in headless mode since GitHub servers don't have a monitor attached
+        python -B linkedin.py
