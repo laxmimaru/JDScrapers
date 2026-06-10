@@ -44,7 +44,7 @@ jobs:
         SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
         EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
         RECEIVER_EMAIL: ${{ secrets.RECEIVER_EMAIL }}
-        SMTP_SERVER: "smtp://gmail.com"
+        SMTP_SERVER: "smtp.gmail.com"
         SMTP_PORT: "587"
       run: |
         # Run in headless mode since GitHub servers don't have a monitor attached
