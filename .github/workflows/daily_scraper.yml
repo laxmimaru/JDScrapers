@@ -48,4 +48,4 @@ jobs:
         SMTP_PORT: "587"
       run: |
         # Run in headless mode since GitHub servers don't have a monitor attached
-        python -B linkedin.py
+        python -B jobagent.py
