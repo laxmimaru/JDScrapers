@@ -2,8 +2,8 @@ name: Daily LinkedIn Job Scraper
 
 on:
   schedule:
-    # Runs every day at 11:05 PM IST (17:35 UTC). Adjust the hour if needed.
-    - cron: '35 17 * * *'
+    # Runs every day at 11:15 PM IST (17:45 UTC). Adjust the hour if needed.
+    - cron: '45 17 * * *'
   workflow_dispatch: # Allows you to also trigger the script manually from the GitHub website
 
 jobs:
