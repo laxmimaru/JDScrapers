@@ -2,8 +2,10 @@ name: Daily LinkedIn Job Scraper
 
 on:
   schedule:
-    # Runs every day at 11:15 PM IST (17:45 UTC). Adjust the hour if needed.
-    - cron: '45 17 * * *'
+    # Runs every day at 8:00 AM IST (02:30 UTC) and 6:00 PM IST (12:30 UTC).
+    # Cron times are in UTC: 02:30 and 12:30 respectively.
+    - cron: '30 2 * * *'
+    - cron: '30 12 * * *'
   workflow_dispatch: # Allows you to also trigger the script manually from the GitHub website
 
 jobs:
@@ -22,10 +24,16 @@ jobs:
 
     - name: Install Google Chrome & Dependencies
       run: |
-        sudo apt-get update
-        sudo apt-get install -y wget curl unzip libxi6 libgconf-2-4 libnss3
-        # Ensure Chrome is available on the virtual machine
-        sudo apt-get install -y google-chrome-stable
+        if ! command -v google-chrome >/dev/null; then
+          sudo apt-get update
+          sudo apt-get install -y wget unzip gnupg
+          wget -q -O - https://dl.google.com/linux/linux_signing_key.pub | sudo tee /usr/share/keyrings/google-linux-signing-keyring.gpg >/dev/null
+          echo "deb [arch=amd64 signed-by=/usr/share/keyrings/google-linux-signing-keyring.gpg] http://dl.google.com/linux/chrome/deb/ stable main" | sudo tee /etc/apt/sources.list.d/google-chrome.list
+          sudo apt-get update
+          sudo apt-get install -y google-chrome-stable
+        else
+          google-chrome --version
+        fi
 
     - name: Install Python Package Dependencies
       run: |
@@ -38,8 +46,8 @@ jobs:
         SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
         EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
         RECEIVER_EMAIL: ${{ secrets.RECEIVER_EMAIL }}
-        SMTP_SERVER: "smtp://gmail.com"
+        SMTP_SERVER: "smtp.gmail.com"
         SMTP_PORT: "587"
       run: |
         # Run in headless mode since GitHub servers don't have a monitor attached
-        python -B linkedin.py
+        python -B jobagent.py
