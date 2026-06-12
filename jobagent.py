@@ -285,22 +285,21 @@ for idx, card in enumerate(job_cards):
             job_description,
             company_description
         ])
-        if not any(pattern.search(combined_text) for pattern in SEARCH_PATTERNS):
+                if not any(pattern.search(combined_text) for pattern in SEARCH_PATTERNS):
             print(f"⚠️ Skipping job because it does not match case-insensitive terms: {JOB_KEYWORD}")
             continue
 
         all_jobs.append({
-            "country": "India", # Now fixed to India as we are searching specific locations,
-            "job_title": job_title,
-            "company_name": company_name,
-            "company_url": company_url,
-            "location": location,
-            "benefit": benefit,
-            "posted": posted,
-            "company_description": company_description,
-            "job_url": job_url,
-            "job_description": job_description
-        })
+        "job_title": job_title,
+        "company_name": company_name,
+        "company_url": company_url,
+        "location": location,
+        "benefit": benefit,
+        "posted": posted,
+        "company_description": company_description,
+        "job_url": job_url,
+        "job_description": job_description
+    })
 
 # --- SAVE TO EXCEL ---
 if all_jobs:
