@@ -285,7 +285,7 @@ for idx, card in enumerate(job_cards):
             job_description,
             company_description
         ])
-                if not any(pattern.search(combined_text) for pattern in SEARCH_PATTERNS):
+        if not any(pattern.search(combined_text) for pattern in SEARCH_PATTERNS):
             print(f"⚠️ Skipping job because it does not match case-insensitive terms: {JOB_KEYWORD}")
             continue
 
