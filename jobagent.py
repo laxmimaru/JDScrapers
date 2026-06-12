@@ -44,7 +44,7 @@ for term in [t.strip() for t in re.split(r'(?i)\s+OR\s+', JOB_KEYWORD) if t.stri
         SEARCH_PATTERNS.append(re.compile(r"\b" + re.escape(term) + r"\b", re.I))
 
 LOCATION_PATTERNS = [
-    #re.compile(r"\bhyderabad\b", re.I),
+   # re.compile(r"\bhyderabad\b", re.I),
     re.compile(r"\b(remote|work from home|wfh)\b", re.I),
 ]
 
