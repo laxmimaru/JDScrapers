@@ -29,6 +29,8 @@ SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
 
 # --- CONFIG ---
 JOB_KEYWORD = "MERN OR React OR node js"
+JOB_LOCATIONS = "Hyderabad, Telangana, remote"
+
 
 # Build regex patterns for each search term so matching is case-insensitive
 # and can handle variants like Node.js / node js / nodejs.
@@ -45,6 +47,7 @@ for term in [t.strip() for t in re.split(r'(?i)\s+OR\s+', JOB_KEYWORD) if t.stri
 
 LOCATION_PATTERNS = [
     re.compile(r"\bhyderabad\b", re.I),
+    re.compile(r"\btelangana\b", re.I),
     re.compile(r"\b(remote|work from home|wfh)\b", re.I),
 ]
 
@@ -74,6 +77,7 @@ safe_keyword = JOB_KEYWORD.replace(" ", "_")
 safe_exp = ",".join(EXPERIENCE_LEVELS).replace(",", "_") if EXPERIENCE_LEVELS else "all"
 safe_workplace = ",".join(WORKPLACE_TYPES).replace(",", "_") if WORKPLACE_TYPES else "all"
 safe_date = DATE_POSTED
+safe_location = JOB_LOCATIONS.replace(" ", "_").replace(",", "_")
 
 # --- SETUP CHROME ---
 # --- SETUP CHROME ---
@@ -99,7 +103,9 @@ def build_linkedin_url(keyword, location, exp_levels, workplace_types, date_post
     elif date_posted == "week": date_param = "r604800"
     elif date_posted == "month": date_param = "r2592000"
 
-    url = f"https://www.linkedin.com/jobs/search/?keywords={quote_plus(keyword)}&location={quote_plus(location)}"
+    # Split locations and join them with '%2C' for the URL
+    quoted_locations = "%2C".join(quote_plus(loc.strip()) for loc in location.split(','))
+    url = f"https://www.linkedin.com/jobs/search/?keywords={quote_plus(keyword)}&location={quoted_locations}"
     if exp_param: url += f"&f_E={exp_param}"
     if workplace_param: url += f"&f_WT={workplace_param}"
     if date_param: url += f"&f_TPR={date_param}"
@@ -126,24 +132,27 @@ def scroll_page(driver):
         last_height = new_height
         attempt += 1
 
-def fetch_job_details(job_url):
+def fetch_job_details(job_url, job_location):
     job_desc = ""
     company_desc = ""
     if not job_url: 
         return job_desc, company_desc
     try:
         driver.get(job_url)
-        time.sleep(DETAIL_PAUSE)
-        WebDriverWait(driver, 5).until(
+        # Increased wait time for robustness
+        WebDriverWait(driver, 10).until(
             EC.presence_of_element_located((By.CLASS_NAME, "description__text"))
         )
+        time.sleep(DETAIL_PAUSE) # Keep existing sleep
         job_soup = BeautifulSoup(driver.page_source, "html.parser")
         job_div = job_soup.find("div", class_="description__text")
         job_desc = job_div.get_text(separator="\n", strip=True) if job_div else ""
         company_div = job_soup.find("div", class_="show-more-less-html__markup")
         company_desc = company_div.get_text(separator="\n", strip=True) if company_div else ""
     except Exception as e:
-        print(f"⚠️ Failed to fetch job detail: {e}")
+        print(f"⚠️ Failed to fetch job detail for URL: {job_url} (Location: {job_location}). Error: {type(e).__name__} - {e} at {driver.current_url}")
+        # Optionally, print full traceback for more detailed debugging
+        # traceback.print_exc()
     return job_desc, company_desc
 
 
@@ -237,18 +246,18 @@ def send_job_email(jobs, sender, password, receiver):
 # --- MAIN SCRAPING LOOP ---
 all_jobs = []
 
-for country in COUNTRIES:
-    print(f"=== Scraping LinkedIn Jobs for {country} ===")
-    url = build_linkedin_url(JOB_KEYWORD, country, EXPERIENCE_LEVELS, WORKPLACE_TYPES, DATE_POSTED)
-    print(f"🔗 URL: {url}")
-    driver.get(url)
-    scroll_page(driver)
+# No need to loop through countries, as the location is now combined
+print(f"=== Scraping LinkedIn Jobs for {JOB_LOCATIONS} ===")
+url = build_linkedin_url(JOB_KEYWORD, JOB_LOCATIONS, EXPERIENCE_LEVELS, WORKPLACE_TYPES, DATE_POSTED)
+print(f"🔗 URL: {url}")
+driver.get(url)
+scroll_page(driver)
 
-    page_html = driver.page_source
-    soup = BeautifulSoup(page_html, "html.parser")
-    job_cards = soup.find_all("div", class_="base-card") 
+page_html = driver.page_source
+soup = BeautifulSoup(page_html, "html.parser")
+job_cards = soup.find_all("div", class_="base-card") 
     
-    for idx, card in enumerate(job_cards):
+for idx, card in enumerate(job_cards):
         a_tag = card.find("a", class_="base-card__full-link")
         job_url = a_tag["href"].strip() if a_tag else ""
         job_title = a_tag.find("span", class_="sr-only").text.strip() if a_tag and a_tag.find("span", class_="sr-only") else ""
@@ -264,11 +273,11 @@ for country in COUNTRIES:
         posted = posted.text.strip() if posted else ""
 
         if not any(pattern.search(location) for pattern in LOCATION_PATTERNS):
-            print(f"⚠️ Skipping job because location is not Hyderabad or remote: {location}")
-            continue
+                    print(f"⚠️ Skipping job because location is not Hyderabad, Telangana or remote: {location}")
+                    continue
 
-        print(f"🔍 ({idx + 1}/{len(job_cards)}) Fetching job: {job_title}")
-        job_description, company_description = fetch_job_details(job_url)
+        print(f"🔍 ({idx + 1}/{len(job_cards)}) Fetching job: {job_title} - {location}")
+        job_description, company_description = fetch_job_details(job_url, location)
 
         combined_text = " ".join([
             job_title,
@@ -284,21 +293,20 @@ for country in COUNTRIES:
             continue
 
         all_jobs.append({
-            "country": country,
-            "job_title": job_title,
-            "company_name": company_name,
-            "company_url": company_url,
-            "location": location,
-            "benefit": benefit,
-            "posted": posted,
-            "company_description": company_description,
-            "job_url": job_url,
-            "job_description": job_description
-        })
+        "job_title": job_title,
+        "company_name": company_name,
+        "company_url": company_url,
+        "location": location,
+        "benefit": benefit,
+        "posted": posted,
+        "company_description": company_description,
+        "job_url": job_url,
+        "job_description": job_description
+    })
 
 # --- SAVE TO EXCEL ---
 if all_jobs:
-    base_name = f"linkedin_jobs_{safe_keyword}_{'_'.join([c.replace(' ','') for c in COUNTRIES])}_{safe_exp}_{safe_workplace}_{safe_date}"
+    base_name = f"linkedin_jobs_{safe_keyword}_{safe_location}_{safe_exp}_{safe_workplace}_{safe_date}"
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     seq = 1
     while True:
