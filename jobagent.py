@@ -132,24 +132,27 @@ def scroll_page(driver):
         last_height = new_height
         attempt += 1
 
-def fetch_job_details(job_url):
+def fetch_job_details(job_url, job_location):
     job_desc = ""
     company_desc = ""
     if not job_url: 
         return job_desc, company_desc
     try:
         driver.get(job_url)
-        time.sleep(DETAIL_PAUSE)
-        WebDriverWait(driver, 5).until(
+        # Increased wait time for robustness
+        WebDriverWait(driver, 10).until(
             EC.presence_of_element_located((By.CLASS_NAME, "description__text"))
         )
+        time.sleep(DETAIL_PAUSE) # Keep existing sleep
         job_soup = BeautifulSoup(driver.page_source, "html.parser")
         job_div = job_soup.find("div", class_="description__text")
         job_desc = job_div.get_text(separator="\n", strip=True) if job_div else ""
         company_div = job_soup.find("div", class_="show-more-less-html__markup")
         company_desc = company_div.get_text(separator="\n", strip=True) if company_div else ""
     except Exception as e:
-        print(f"⚠️ Failed to fetch job detail: {e}")
+        print(f"⚠️ Failed to fetch job detail for URL: {job_url} (Location: {job_location}). Error: {type(e).__name__} - {e} at {driver.current_url}")
+        # Optionally, print full traceback for more detailed debugging
+        # traceback.print_exc()
     return job_desc, company_desc
 
 
@@ -273,8 +276,8 @@ for idx, card in enumerate(job_cards):
                     print(f"⚠️ Skipping job because location is not Hyderabad, Telangana or remote: {location}")
                     continue
 
-        print(f"🔍 ({idx + 1}/{len(job_cards)}) Fetching job: {job_title}")
-        job_description, company_description = fetch_job_details(job_url)
+        print(f"🔍 ({idx + 1}/{len(job_cards)}) Fetching job: {job_title} - {location}")
+        job_description, company_description = fetch_job_details(job_url, location)
 
         combined_text = " ".join([
             job_title,

@@ -5,8 +5,8 @@ on:
     # Runs every day at 8:00 AM IST (02:30 UTC) and 6:34 PM IST (13:04 UTC).
     # Cron times are in UTC: 02:30 and 13:04 respectively.
     # Temporary test schedule: run every 5 minutes for verification (remove after test)
-    # Refresh commit applied to trigger GitHub schedule registration.
-    - cron: '*/5 * * * *'
+    # Refresh commit applied to trigger GitHub schedule registration.    
+    # - cron: '*/5 * * * *' # Removed the test schedule trigger
     - cron: '30 2 * * *'
     - cron: '4 13 * * *'
   workflow_dispatch: # Allows you to also trigger the script manually from the GitHub website
@@ -54,3 +54,4 @@ jobs:
       run: |
         # Run in headless mode since GitHub servers don't have a monitor attached
         python -B jobagent.py
+
