@@ -28,14 +28,18 @@ SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
 SMTP_PORT = int(os.getenv("SMTP_PORT", "587"))
 
 # --- CONFIG ---
-JOB_KEYWORD = "MERN OR React OR node js"
-JOB_LOCATIONS = "Hyderabad, Telangana, remote"
+# JOB_KEYWORD = "MERN OR React OR node js"
+# Use Boolean logic: (MERN OR React OR node js) AND (Remote OR Hyderabad) to get both remote and Hyderabad jobs
+JOB_KEYWORD = "(MERN OR React OR node js) AND (Remote OR Hyderabad)"
+JOB_LOCATIONS = ""  # Empty to enable global search (remote jobs from anywhere, non-remote filtered by location)
 
 
 # Build regex patterns for each search term so matching is case-insensitive
 # and can handle variants like Node.js / node js / nodejs.
+# Extract only the skill keywords from the Boolean logic for local filtering
+SKILL_KEYWORDS = "MERN OR React OR node js"
 SEARCH_PATTERNS = []
-for term in [t.strip() for t in re.split(r'(?i)\s+OR\s+', JOB_KEYWORD) if t.strip()]:
+for term in [t.strip() for t in re.split(r'(?i)\s+OR\s+', SKILL_KEYWORDS) if t.strip()]:
     if term.lower() == "mern":
         SEARCH_PATTERNS.append(re.compile(r"\bmern\b", re.I))
     elif term.lower() == "react":
@@ -46,10 +50,15 @@ for term in [t.strip() for t in re.split(r'(?i)\s+OR\s+', JOB_KEYWORD) if t.stri
         SEARCH_PATTERNS.append(re.compile(r"\b" + re.escape(term) + r"\b", re.I))
 
 LOCATION_PATTERNS = [
-    re.compile(r"\bhyderabad\b", re.I),
-    re.compile(r"\btelangana\b", re.I),
-    re.compile(r"\b(remote|work from home|wfh)\b", re.I),
+    re.compile(r"hyderabad", re.I),
+    re.compile(r"telangana", re.I),
+    re.compile(r"serilingampalli", re.I),
+    re.compile(r"india", re.I),
+    re.compile(r"(remote|work from home|wfh|global)", re.I),
 ]
+
+# Pattern to detect remote jobs specifically
+REMOTE_PATTERN = re.compile(r"(remote|work from home|wfh|global)", re.I)
 
 COUNTRIES = ["India"]
 DATE_POSTED = "24h"
@@ -103,9 +112,8 @@ def build_linkedin_url(keyword, location, exp_levels, workplace_types, date_post
     elif date_posted == "week": date_param = "r604800"
     elif date_posted == "month": date_param = "r2592000"
 
-    # Split locations and join them with '%2C' for the URL
-    quoted_locations = "%2C".join(quote_plus(loc.strip()) for loc in location.split(','))
-    url = f"https://www.linkedin.com/jobs/search/?keywords={quote_plus(keyword)}&location={quoted_locations}"
+    # Build URL with Boolean keyword logic - no location parameter for global search
+    url = f"https://www.linkedin.com/jobs/search/?keywords={quote_plus(keyword)}"
     if exp_param: url += f"&f_E={exp_param}"
     if workplace_param: url += f"&f_WT={workplace_param}"
     if date_param: url += f"&f_TPR={date_param}"
@@ -156,6 +164,10 @@ def fetch_job_details(job_url, job_location):
     return job_desc, company_desc
 
 
+def is_remote_job(workplace_type):
+    """Check if a job is remote based on workplace type from job card"""
+    return workplace_type == "Remote"
+
 def build_excel_workbook(jobs):
     workbook = Workbook()
     sheet = workbook.active
@@ -168,9 +180,9 @@ def build_excel_workbook(jobs):
     return workbook
 
 
-def send_job_email(jobs, sender, password, receiver):
+def send_job_email(jobs, job_type, sender, password, receiver):
     if not jobs:
-        print("⚠️ No jobs to email.")
+        print(f"⚠️ No {job_type} jobs to email.")
         return False
     missing = []
     if not sender: missing.append('SENDER_EMAIL')
@@ -201,9 +213,9 @@ def send_job_email(jobs, sender, password, receiver):
     except Exception as e:
         print(f"⚠️ TCP connection failed: {e}")
 
+    # Build HTML content with single table
     headers = list(jobs[0].keys())
     email_headers = ["SNO"] + headers
-    # Build HTML table
     table_rows = []
     for index, job in enumerate(jobs, start=1):
         cols = [html.escape(str(index))] + [html.escape(str(job.get(h, ""))) for h in headers]
@@ -216,13 +228,13 @@ def send_job_email(jobs, sender, password, receiver):
         + "".join(table_rows)
         + "</tbody></table>"
     )
-
-    html_content = f"<html><body><p>Found {len(jobs)} jobs.</p>{table_html}</body></html>"
+    
+    html_content = f"<html><body><h2>{job_type.capitalize()} Jobs ({len(jobs)})</h2>{table_html}</body></html>"
 
     msg = MIMEMultipart("alternative")
     msg["From"] = sender
     msg["To"] = receiver
-    msg["Subject"] = f"LinkedIn Job Scraper Results ({len(jobs)} jobs)"
+    msg["Subject"] = f"LinkedIn Job Listings - {job_type.capitalize()} ({len(jobs)} jobs)"
     msg.attach(MIMEText(html_content, "html"))
 
     try:
@@ -244,7 +256,10 @@ def send_job_email(jobs, sender, password, receiver):
 
 
 # --- MAIN SCRAPING LOOP ---
-all_jobs = []
+remote_jobs = []
+non_remote_jobs = []
+skipped_location = 0
+skipped_keywords = 0
 
 # No need to loop through countries, as the location is now combined
 print(f"=== Scraping LinkedIn Jobs for {JOB_LOCATIONS} ===")
@@ -256,6 +271,7 @@ scroll_page(driver)
 page_html = driver.page_source
 soup = BeautifulSoup(page_html, "html.parser")
 job_cards = soup.find_all("div", class_="base-card") 
+print(f"📋 Total job cards found: {len(job_cards)}")
     
 for idx, card in enumerate(job_cards):
         a_tag = card.find("a", class_="base-card__full-link")
@@ -271,10 +287,33 @@ for idx, card in enumerate(job_cards):
         benefit = benefit.text.strip() if benefit else ""
         posted = card.find("time", class_="job-search-card__listdate")
         posted = posted.text.strip() if posted else ""
+        
+        # Extract workplace type from job card (Remote/On-site/Hybrid)
+        workplace_type = ""
+        workplace_elem = card.find("span", class_="job-search-card__workplace-type")
+        if workplace_elem:
+            workplace_type = workplace_elem.text.strip()
+            print(f"🏢 Workplace type from element: {workplace_type}")
+        else:
+            # Try alternative method - check if workplace type is in the card text
+            card_text = card.get_text()
+            if "Remote" in card_text:
+                workplace_type = "Remote"
+            elif "On-site" in card_text:
+                workplace_type = "On-site"
+            elif "Hybrid" in card_text:
+                workplace_type = "Hybrid"
+            print(f"🏢 Workplace type from text fallback: {workplace_type}")
 
-        if not any(pattern.search(location) for pattern in LOCATION_PATTERNS):
-                    print(f"⚠️ Skipping job because location is not Hyderabad, Telangana or remote: {location}")
-                    continue
+        # For non-remote jobs, apply location filter to ensure Hyderabad/India only
+        # Remote jobs can be from anywhere (global)
+        if not is_remote_job(workplace_type):
+            location_match = any(pattern.search(location) for pattern in LOCATION_PATTERNS)
+            print(f"🔍 Location filter check: {location} matches patterns: {location_match}")
+            if not location_match:
+                print(f"⚠️ Skipping non-remote job because location is not Hyderabad/Telangana/India: {location} (workplace_type: {workplace_type})")
+                skipped_location += 1
+                continue
 
         print(f"🔍 ({idx + 1}/{len(job_cards)}) Fetching job: {job_title} - {location}")
         job_description, company_description = fetch_job_details(job_url, location)
@@ -290,37 +329,73 @@ for idx, card in enumerate(job_cards):
         ])
         if not any(pattern.search(combined_text) for pattern in SEARCH_PATTERNS):
             print(f"⚠️ Skipping job because it does not match case-insensitive terms: {JOB_KEYWORD}")
+            skipped_keywords += 1
             continue
 
-        all_jobs.append({
-        "job_title": job_title,
-        "company_name": company_name,
-        "company_url": company_url,
-        "location": location,
-        "benefit": benefit,
-        "posted": posted,
-        "company_description": company_description,
-        "job_url": job_url,
-        "job_description": job_description
-    })
+        job_data = {
+            "job_title": job_title,
+            "company_name": company_name,
+            "company_url": company_url,
+            "location": location,
+            "benefit": benefit,
+            "posted": posted,
+            "company_description": company_description,
+            "job_url": job_url,
+            "job_description": job_description,
+            "workplace_type": workplace_type
+        }
+        
+        # Determine if job is remote based on workplace type from job card
+        if is_remote_job(workplace_type):
+            remote_jobs.append(job_data)
+            print(f"✅ Added to remote jobs: {job_title} - {location} ({workplace_type})")
+        else:
+            non_remote_jobs.append(job_data)
+            print(f"✅ Added to non-remote jobs: {job_title} - {location} ({workplace_type})")
 
-# --- SAVE TO EXCEL ---
-if all_jobs:
+# --- SAVE TO EXCEL AND SEND EMAILS ---
+print(f"📊 Scraping complete. Remote jobs found: {len(remote_jobs)}, Non-remote jobs found: {len(non_remote_jobs)}")
+print(f"📊 Skipped due to location filter: {skipped_location}")
+print(f"📊 Skipped due to keyword filter: {skipped_keywords}")
+if remote_jobs or non_remote_jobs:
     base_name = f"linkedin_jobs_{safe_keyword}_{safe_location}_{safe_exp}_{safe_workplace}_{safe_date}"
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     seq = 1
-    while True:
-        excel_file = f"{base_name}_{timestamp}_{seq}.xlsx"
-        if not os.path.exists(excel_file):
-            break
-        seq += 1
-
-    workbook = build_excel_workbook(all_jobs)
-    # Send jobs as HTML table in email (no attachment)
-    send_job_email(all_jobs, SENDER_EMAIL, EMAIL_PASSWORD, RECEIVER_EMAIL)
-
-    workbook.save(excel_file)
-    print(f"📁 Saved {len(all_jobs)} jobs to {excel_file}")
+    
+    # Save remote jobs to Excel
+    if remote_jobs:
+        while True:
+            remote_excel_file = f"{base_name}_remote_{timestamp}_{seq}.xlsx"
+            if not os.path.exists(remote_excel_file):
+                break
+            seq += 1
+        remote_workbook = build_excel_workbook(remote_jobs)
+        remote_workbook.save(remote_excel_file)
+        print(f"📁 Saved {len(remote_jobs)} remote jobs to {remote_excel_file}")
+        # Send email for remote jobs
+        remote_email_sent = send_job_email(remote_jobs, "remote", SENDER_EMAIL, EMAIL_PASSWORD, RECEIVER_EMAIL)
+        print(f"ℹ️ Remote email send status: {'Success' if remote_email_sent else 'Failed'}")
+    
+    # Save non-remote jobs to Excel
+    if non_remote_jobs:
+        seq = 1
+        while True:
+            non_remote_excel_file = f"{base_name}_non_remote_{timestamp}_{seq}.xlsx"
+            if not os.path.exists(non_remote_excel_file):
+                break
+            seq += 1
+        non_remote_workbook = build_excel_workbook(non_remote_jobs)
+        non_remote_workbook.save(non_remote_excel_file)
+        print(f"📁 Saved {len(non_remote_jobs)} non-remote jobs to {non_remote_excel_file}")
+        # Add delay to avoid SMTP rate limiting
+        print("ℹ️ Waiting 10 seconds before sending non-remote email to avoid rate limiting...")
+        time.sleep(10)
+        # Send email for non-remote jobs
+        non_remote_email_sent = send_job_email(non_remote_jobs, "non-remote", SENDER_EMAIL, EMAIL_PASSWORD, RECEIVER_EMAIL)
+        print(f"ℹ️ Non-remote email send status: {'Success' if non_remote_email_sent else 'Failed'}")
+    
+    total_jobs = len(remote_jobs) + len(non_remote_jobs)
+    print(f"✅ Total: {total_jobs} jobs ({len(remote_jobs)} remote, {len(non_remote_jobs)} non-remote)")
 else:
     print("⚠️ No jobs extracted.")
 
